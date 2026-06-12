@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 from uuid import UUID
 from datetime import datetime
 from typing import Optional
+from enum import Enum
 
 # --- Request Schemas (data coming IN) ---
 
@@ -39,3 +40,33 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str
     user: UserResponse
+    
+class WorkspaceRoleEnum(str, Enum):
+    owner = "owner"
+    admin = "admin"
+    member = "member"
+    viewer = "viewer"
+
+# --- Workspace Schemas ---
+
+class WorkspaceCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class WorkspaceResponse(BaseModel):
+    id: UUID
+    name: str
+    description: Optional[str]
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class WorkspaceMemberResponse(BaseModel):
+    user: UserResponse
+    role: WorkspaceRoleEnum
+    joined_at: datetime
+
+    class Config:
+        from_attributes = True

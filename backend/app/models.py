@@ -1,8 +1,16 @@
-from sqlalchemy import Column, String, Boolean, DateTime
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from app.database import Base
 import uuid
+import enum
 from datetime import datetime, timezone
+
+class WorkspaceRole(enum.Enum):
+    owner = "owner"
+    admin = "admin"
+    member = "member"
+    viewer = "viewer"
 
 class User(Base):
     __tablename__ = "users"
@@ -14,3 +22,29 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    workspace_memberships = relationship("WorkspaceMember", back_populates="user")
+
+class Workspace(Base):
+    __tablename__ = "workspaces"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    members = relationship("WorkspaceMember", back_populates="workspace")
+
+class WorkspaceMember(Base):
+    __tablename__ = "workspace_members"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    role = Column(Enum(WorkspaceRole), default=WorkspaceRole.member, nullable=False)
+    joined_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    workspace = relationship("Workspace", back_populates="members")
+    user = relationship("User", back_populates="workspace_memberships")
