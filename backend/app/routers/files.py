@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import File as FileModel, Workspace, WorkspaceMember, User
+from app.models import File as FileModel, WorkspaceMember, User
 from app.schemas import FileResponse
 from app.dependencies import get_current_user
 from app.services.storage import save_file
+from app.tasks import process_file
 from typing import List
 import uuid
 
@@ -48,6 +49,9 @@ async def upload_file(
     db.add(db_file)
     db.commit()
     db.refresh(db_file)
+
+    # Trigger background processing
+    process_file.delay(str(db_file.id))
 
     return db_file
 
