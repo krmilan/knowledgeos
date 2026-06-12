@@ -82,3 +82,15 @@ class FileResponse(BaseModel):
 
     class Config:
         from_attributes = True
+        
+class ChatRequest(BaseModel):
+    question: str
+
+class SourceResponse(BaseModel):
+    file_id: str
+    score: float
+    preview: str
+
+class ChatResponse(BaseModel):
+    answer: str
+    sources: list[SourceResponse]

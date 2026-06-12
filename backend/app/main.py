@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from dotenv import load_dotenv
-from app.routers import auth, workspaces, files
+from app.routers import auth, workspaces, files, chat
 
 load_dotenv()
 
@@ -13,6 +13,7 @@ app = FastAPI(
 app.include_router(auth.router)
 app.include_router(workspaces.router)
 app.include_router(files.router)
+app.include_router(chat.router)
 
 @app.get("/")
 def root():

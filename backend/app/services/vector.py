@@ -67,17 +67,16 @@ def search_similar(query: str, workspace_id: str, limit: int = 5) -> list:
         model="models/gemini-embedding-001",
         contents=query,
     ).embeddings[0].values
-
-    results = client.search(
+    results = client.query_points(
         collection_name=COLLECTION_NAME,
-        query_vector=query_embedding,
+        query=query_embedding,
         query_filter={
             "must": [
                 {"key": "workspace_id", "match": {"value": workspace_id}}
             ]
         },
         limit=limit
-    )
+    ).points
 
     return [
         {
