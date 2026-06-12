@@ -48,3 +48,21 @@ class WorkspaceMember(Base):
 
     workspace = relationship("Workspace", back_populates="members")
     user = relationship("User", back_populates="workspace_memberships")
+
+class File(Base):
+    __tablename__ = "files"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
+    uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    original_name = Column(String, nullable=False)
+    stored_name = Column(String, nullable=False)
+    file_type = Column(String, nullable=False)
+    mime_type = Column(String, nullable=False)
+    size_bytes = Column(String, nullable=False)
+    storage_path = Column(String, nullable=False)
+    is_processed = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    workspace = relationship("Workspace", backref="files")
+    uploader = relationship("User", backref="files")

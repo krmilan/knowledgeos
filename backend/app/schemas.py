@@ -70,3 +70,15 @@ class WorkspaceMemberResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class FileResponse(BaseModel):
+    id: UUID
+    original_name: str
+    file_type: str
+    mime_type: str
+    size_bytes: str
+    is_processed: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
