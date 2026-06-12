@@ -1,6 +1,8 @@
 from app.worker import celery_app
 from app.database import SessionLocal
 from app.models import File
+from app.services.pdf import extract_text, chunk_text
+from app.services.vector import store_chunks
 import uuid
 
 @celery_app.task(name="process_file")
@@ -16,13 +18,23 @@ def process_file(file_id: str):
 
         print(f"Processing file: {file.original_name}")
 
-        # Phase 6 will add real processing here:
-        # 1. Extract text from PDF
-        # 2. Chunk the text
-        # 3. Generate embeddings
-        # 4. Store in Qdrant
+        if file.file_type == "pdf":
+            # Extract text
+            text = extract_text(file.storage_path)
+            print(f"Extracted {len(text)} characters")
 
-        # For now just mark as processed
+            # Chunk text
+            chunks = chunk_text(text)
+            print(f"Created {len(chunks)} chunks")
+
+            # Store in Qdrant
+            store_chunks(
+                file_id=str(file.id),
+                workspace_id=str(file.workspace_id),
+                chunks=chunks
+            )
+
+        # Mark as processed
         file.is_processed = True
         db.commit()
 
