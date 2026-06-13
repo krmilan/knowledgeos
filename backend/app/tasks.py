@@ -1,9 +1,13 @@
+import asyncio
+
 from app.worker import celery_app
 from app.database import SessionLocal
 from app.models import File
 from app.services.pdf import extract_text, chunk_text
 from app.services.vector import store_chunks
 import uuid
+
+from app.websocket_manager import publish_to_workspace
 
 @celery_app.task(name="process_file")
 def process_file(file_id: str):
@@ -37,6 +41,12 @@ def process_file(file_id: str):
         # Mark as processed
         file.is_processed = True
         db.commit()
+        
+        asyncio.run(publish_to_workspace(str(file.workspace_id), {
+            "type": "file_processed",
+            "file_id": file_id,
+            "file_name": file.original_name
+        }))
 
         print(f"File {file.original_name} processed successfully")
         return {"status": "success", "file_id": file_id}
