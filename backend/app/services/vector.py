@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 client_genai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-client = QdrantClient(host="localhost", port=6333)
+qdrant_host = os.getenv("QDRANT_HOST", "localhost")
+client = QdrantClient(host=qdrant_host, port=6333)
 
 COLLECTION_NAME = "knowledgeos"
 VECTOR_SIZE = 3072  # Gemini embedding size
