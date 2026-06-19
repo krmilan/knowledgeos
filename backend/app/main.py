@@ -7,6 +7,7 @@ from app.routers.websocket import router as ws_router
 from app.routers import graph
 from app.websocket_manager import redis_listener
 from app.services.vector import ensure_entities_collection
+from app.routers import agent
 
 load_dotenv()
 
@@ -32,6 +33,7 @@ app.include_router(files.router)
 app.include_router(chat.router)
 app.include_router(ws_router)
 app.include_router(graph.router)
+app.include_router(agent.router, tags=["agent"])
 
 @app.get("/")
 def root():
