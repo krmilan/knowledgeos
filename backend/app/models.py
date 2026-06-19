@@ -1,6 +1,7 @@
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Enum, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 from app.database import Base
 import uuid
 import enum
@@ -66,3 +67,34 @@ class File(Base):
 
     workspace = relationship("Workspace", backref="files")
     uploader = relationship("User", backref="files")
+    entity_links = relationship("DocumentEntity", back_populates="file", cascade="all, delete-orphan")
+
+class Entity(Base):
+    __tablename__ = "entities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    type = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "name", "type", name="uq_entity_workspace_name_type"),
+    )
+
+    document_links = relationship("DocumentEntity", back_populates="entity", cascade="all, delete-orphan")
+
+
+class DocumentEntity(Base):
+    __tablename__ = "document_entities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    file_id = Column(UUID(as_uuid=True), ForeignKey("files.id", ondelete="CASCADE"), nullable=False, index=True)
+    entity_id = Column(Integer, ForeignKey("entities.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("file_id", "entity_id", name="uq_document_entity"),
+    )
+
+    entity = relationship("Entity", back_populates="document_links")
+    file = relationship("File", back_populates="entity_links")

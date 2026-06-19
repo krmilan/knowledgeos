@@ -5,9 +5,14 @@ from app.database import SessionLocal
 from app.models import File
 from app.services.pdf import extract_text, chunk_text
 from app.services.vector import store_chunks
+from app.services.entity_extraction import extract_entities_from_chunk
+from app.services.entity_resolution import resolve_entity, link_entity_to_document
 import uuid
+import logging
 
 from app.websocket_manager import publish_to_workspace
+
+logger = logging.getLogger(__name__)
 
 @celery_app.task(name="process_file")
 def process_file(file_id: str):
@@ -38,10 +43,26 @@ def process_file(file_id: str):
                 chunks=chunks
             )
 
+            # Extract entities from each chunk and resolve them
+            for chunk in chunks:
+                try:
+                    extracted = extract_entities_from_chunk(chunk)
+                    for item in extracted:
+                        entity = resolve_entity(
+                            db,
+                            workspace_id=file.workspace_id,
+                            name=item["name"],
+                            entity_type=item["type"],
+                        )
+                        link_entity_to_document(db, file_id=file.id, entity_id=entity.id)
+                except Exception:
+                    logger.exception("Entity extraction failed for a chunk of file %s", file_id)
+                    continue
+
         # Mark as processed
         file.is_processed = True
         db.commit()
-        
+
         asyncio.run(publish_to_workspace(str(file.workspace_id), {
             "type": "file_processed",
             "file_id": file_id,

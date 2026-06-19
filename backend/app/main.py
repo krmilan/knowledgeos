@@ -4,15 +4,16 @@ from fastapi import FastAPI
 from dotenv import load_dotenv
 from app.routers import auth, workspaces, files, chat
 from app.routers.websocket import router as ws_router
+from app.routers import graph
 from app.websocket_manager import redis_listener
+from app.services.vector import ensure_entities_collection
 
 load_dotenv()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start Redis listener in background so WebSocket broadcasts work
-    # across multiple workers
+    ensure_entities_collection()
     task = asyncio.create_task(redis_listener())
     yield
     task.cancel()
@@ -30,6 +31,7 @@ app.include_router(workspaces.router)
 app.include_router(files.router)
 app.include_router(chat.router)
 app.include_router(ws_router)
+app.include_router(graph.router)
 
 @app.get("/")
 def root():

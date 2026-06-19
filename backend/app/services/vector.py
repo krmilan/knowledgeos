@@ -13,6 +13,7 @@ qdrant_host = os.getenv("QDRANT_HOST", "localhost")
 client = QdrantClient(host=qdrant_host, port=6333)
 
 COLLECTION_NAME = "knowledgeos"
+ENTITIES_COLLECTION = "entities"
 VECTOR_SIZE = 3072  # Gemini embedding size
 
 def ensure_collection():
@@ -28,6 +29,20 @@ def ensure_collection():
             )
         )
         print(f"Created collection: {COLLECTION_NAME}")
+
+def ensure_entities_collection():
+    collections = client.get_collections().collections
+    names = [c.name for c in collections]
+
+    if ENTITIES_COLLECTION not in names:
+        client.create_collection(
+            collection_name=ENTITIES_COLLECTION,
+            vectors_config=VectorParams(
+                size=VECTOR_SIZE,
+                distance=Distance.COSINE
+            )
+        )
+        print(f"Created collection: {ENTITIES_COLLECTION}")
 
 def get_embedding(text: str) -> list:
     result = client_genai.models.embed_content(
