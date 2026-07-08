@@ -9,7 +9,7 @@ def extract_text(file_path: str) -> str:
     doc.close()
     return text
 
-def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
+def chunk_text(text: str, chunk_size: int = 200, overlap: int = 40) -> List[str]:
     words = text.split()
     chunks = []
     start = 0

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { apiGraph } from "@/lib/api";
@@ -12,11 +12,14 @@ export default function GraphPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [ForceGraph, setForceGraph] = useState<any>(null);
+  const [hoveredNode, setHoveredNode] = useState<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+  const fgRef = useRef<any>(null);
 
   useEffect(() => {
     if (!auth.isLoggedIn()) { router.push("/login"); return; }
 
-    // Dynamically import — this library only works in browser, not SSR
     import("react-force-graph-2d").then((mod) => {
       setForceGraph(() => mod.default);
     });
@@ -24,11 +27,38 @@ export default function GraphPage() {
     fetchGraph();
   }, [id]);
 
+  // Measure container size for the graph canvas
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setDimensions({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height,
+        });
+      }
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  // After graph loads, apply force tuning
+  useEffect(() => {
+    if (!fgRef.current || graphData.nodes.length === 0) return;
+    const fg = fgRef.current;
+    // Strong repulsion pushes nodes apart
+    fg.d3Force("charge").strength(-300);
+    // Longer link distance spreads connected nodes out
+    fg.d3Force("link").distance(120);
+    // Weak centering so graph doesn't drift too far
+    fg.d3Force("center").strength(0.05);
+    fg.d3ReheatSimulation();
+  }, [graphData, ForceGraph]);
+
   async function fetchGraph() {
     try {
       const data = await apiGraph.get(id) as any;
 
-      // Map backend response to force-graph format
       const nodes = data.nodes?.map((n: any) => ({
         id: n.id,
         label: n.label || n.name || n.id,
@@ -48,6 +78,52 @@ export default function GraphPage() {
       setLoading(false);
     }
   }
+
+  const nodeCanvasObject = useCallback((node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+    const isHovered = hoveredNode && hoveredNode.id === node.id;
+    const isConnectedToHovered = hoveredNode && graphData.links.some(
+      (l: any) =>
+        (l.source?.id === hoveredNode.id && l.target?.id === node.id) ||
+        (l.target?.id === hoveredNode.id && l.source?.id === node.id)
+    );
+
+    // Draw node circle
+    const radius = node.type === "document" ? 8 : 5;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI);
+    ctx.fillStyle = isHovered
+      ? "#ffffff"
+      : isConnectedToHovered
+      ? node.color
+      : node.color;
+    ctx.globalAlpha = hoveredNode && !isHovered && !isConnectedToHovered ? 0.2 : 1;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Always show label for document nodes or hovered/connected nodes
+    const showLabel = node.type === "document" || isHovered || isConnectedToHovered || globalScale > 1.5;
+    if (showLabel) {
+      const label = node.label;
+      const fontSize = Math.max(10, 14 / globalScale);
+      ctx.font = `${node.type === "document" ? "bold " : ""}${fontSize}px Sans-Serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      // Background pill for readability
+      const textWidth = ctx.measureText(label).width;
+      const padding = 3;
+      ctx.fillStyle = "rgba(17, 24, 39, 0.85)";
+      ctx.fillRect(
+        node.x - textWidth / 2 - padding,
+        node.y + radius + 2,
+        textWidth + padding * 2,
+        fontSize + padding * 2
+      );
+
+      ctx.fillStyle = isHovered ? "#ffffff" : isConnectedToHovered ? "#d1fae5" : "rgba(255,255,255,0.75)";
+      ctx.fillText(label, node.x, node.y + radius + fontSize / 2 + padding + 2);
+    }
+  }, [hoveredNode, graphData.links]);
 
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col">
@@ -76,6 +152,11 @@ export default function GraphPage() {
             <h2 className="text-2xl font-semibold">Knowledge Graph</h2>
             <p className="text-gray-400 text-sm mt-1">
               {graphData.nodes.length} nodes · {graphData.links.length} edges
+              {hoveredNode && (
+                <span className="ml-3 text-emerald-400">
+                  {hoveredNode.label} ({hoveredNode.type})
+                </span>
+              )}
             </p>
           </div>
           <div className="flex gap-4 text-sm">
@@ -87,6 +168,7 @@ export default function GraphPage() {
               <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block" />
               <span className="text-gray-400">Entity</span>
             </span>
+            <span className="text-gray-600 text-xs self-center">Hover a node to explore</span>
           </div>
         </div>
 
@@ -96,7 +178,10 @@ export default function GraphPage() {
           </div>
         )}
 
-        <div className="flex-1 bg-gray-900 mx-6 mb-6 rounded-2xl border border-gray-800 overflow-hidden">
+        <div
+          ref={containerRef}
+          className="flex-1 bg-gray-900 mx-6 mb-6 rounded-2xl border border-gray-800 overflow-hidden"
+        >
           {loading ? (
             <div className="flex items-center justify-center h-full text-gray-400">
               Loading graph...
@@ -107,21 +192,28 @@ export default function GraphPage() {
             </div>
           ) : ForceGraph ? (
             <ForceGraph
+              ref={fgRef}
               graphData={graphData}
-              nodeLabel="label"
+              width={dimensions.width}
+              height={dimensions.height}
+              nodeLabel=""
               nodeColor="color"
               nodeRelSize={6}
               linkColor={() => "#374151"}
+              linkWidth={1.5}
               backgroundColor="#111827"
-              nodeCanvasObjectMode={() => "after"}
-              nodeCanvasObject={(node: any, ctx: any, globalScale: any) => {
-                const label = node.label;
-                const fontSize = 12 / globalScale;
-                ctx.font = `${fontSize}px Sans-Serif`;
-                ctx.fillStyle = "rgba(255,255,255,0.8)";
-                ctx.textAlign = "center";
-                ctx.fillText(label, node.x, node.y + 10);
+              nodeCanvasObjectMode={() => "replace"}
+              nodeCanvasObject={nodeCanvasObject}
+              onNodeHover={(node: any) => setHoveredNode(node || null)}
+              onNodeClick={(node: any) => {
+                if (fgRef.current) {
+                  fgRef.current.centerAt(node.x, node.y, 500);
+                  fgRef.current.zoom(2.5, 500);
+                }
               }}
+              cooldownTicks={100}
+              d3AlphaDecay={0.02}
+              d3VelocityDecay={0.3}
             />
           ) : (
             <div className="flex items-center justify-center h-full text-gray-400">

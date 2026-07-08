@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from groq import Groq
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
@@ -12,6 +13,13 @@ load_dotenv()
 
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
+def strip_thinking(text: str) -> str:
+    """Qwen3 reasoning models emit a <think>...</think> block before the real answer.
+    Strip it so users only see the final response."""
+    if not text:
+        return text
+    return re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip()
+
 # All tools the agent can use — the LLM reads these descriptions
 ALL_TOOLS = [
     SEARCH_DOCUMENTS_TOOL,
@@ -20,9 +28,9 @@ ALL_TOOLS = [
 ]
 
 # Safety cap: agent will never loop more than this many times
-MAX_ITERATIONS = 8
+MAX_ITERATIONS = 5
 
-SYSTEM_PROMPT = """You are a research agent for KnowledgeOS. Your job is to thoroughly research a topic and produce a structured report.
+SYSTEM_PROMPT = """You are a research agent for KnowledgeOS. Your job is to research a topic efficiently and produce a structured report.
 
 You have access to three tools:
 - search_documents: search the user's uploaded workspace documents
@@ -30,13 +38,14 @@ You have access to three tools:
 - web_search: search the internet for real-time information
 
 Research process:
-1. Start by searching workspace documents for internal knowledge
-2. Use the knowledge graph to find related concepts and documents
-3. Use web search for external/real-time information
-4. Combine all findings into a comprehensive answer
+1. Search workspace documents for internal knowledge — 1-2 well-chosen queries is usually enough.
+2. Only use get_entity_graph if you need to explore relationships between entities you already found.
+3. Only use web_search for external/real-time information not in workspace documents.
+4. As soon as you have enough information to answer the question, STOP calling tools and write your final report.
 
-Always cite where your information came from (document search, graph, or web).
-When you have gathered enough information, write a well-structured report with clear sections."""
+Important: do not repeat searches with similar wording — if a search returns relevant results, use them. \
+If a search returns nothing new, do not retry with a slightly different phrasing; either try a genuinely \
+different tool or write your final answer with what you have. Aim to finish in 2-4 tool calls total."""
 
 
 def run_tool(tool_name: str, tool_args: dict, workspace_id: str, db: Session) -> str:
@@ -87,12 +96,12 @@ def run_research_agent(query: str, workspace_id: str, db: Session) -> dict:
 
         # Call Groq — give it the full conversation history + available tools
         response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="qwen/qwen3.6-27b",
             messages=messages,
             tools=ALL_TOOLS,
             # "auto" means: LLM decides whether to call a tool or answer directly
             tool_choice="auto",
-            max_tokens=2048
+            max_tokens=2048 ,
         )
 
         message = response.choices[0].message
@@ -102,7 +111,7 @@ def run_research_agent(query: str, workspace_id: str, db: Session) -> dict:
             # Add the LLM's tool-calling message to conversation history
             messages.append({
                 "role": "assistant",
-                "content": message.content or "",
+                "content": strip_thinking(message.content) if message.content else "",
                 "tool_calls": [
                     {
                         "id": tc.id,
@@ -143,25 +152,32 @@ def run_research_agent(query: str, workspace_id: str, db: Session) -> dict:
 
         # --- LLM chose to answer (no tool calls) — we're done ---
         else:
-            final_answer = message.content
-
+            final_answer = strip_thinking(message.content) 
+            
             return {
                 "query": query,
                 "report": final_answer,
                 "steps": steps,
                 "iterations": iteration
             }
-
-    # Safety fallback: hit max iterations without a final answer
-    # Extract whatever the last text response was
-    last_text = next(
-        (m["content"] for m in reversed(messages) if m.get("role") == "assistant" and m.get("content")),
-        "Research agent reached maximum iterations without producing a final report."
+    
+    # Safety fallback: hit max iterations without a final answer.
+    # Ask the model directly to summarize what it found instead of
+    # digging through history for assistant text that may not exist.
+    messages.append({
+        "role": "user",
+        "content": "You've used all available research steps. Based on everything you've found so far, write your best final report now. Do not call any more tools."
+    })
+    response = groq_client.chat.completions.create(
+        model="qwen/qwen3.6-27b",
+        messages=messages,
+        max_tokens=2048,
     )
+    final_text = strip_thinking(response.choices[0].message.content)
 
     return {
         "query": query,
-        "report": last_text,
+        "report": final_text or "Research agent reached maximum iterations without producing a final report.",
         "steps": steps,
         "iterations": iteration,
         "warning": "Max iterations reached"

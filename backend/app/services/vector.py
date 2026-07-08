@@ -1,7 +1,9 @@
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
+from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 from google import genai
 from google.genai import types
+from google.genai.errors import ServerError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import os
 import uuid
 from dotenv import load_dotenv
@@ -44,6 +46,12 @@ def ensure_entities_collection():
         )
         print(f"Created collection: {ENTITIES_COLLECTION}")
 
+@retry(
+    retry=retry_if_exception_type(ServerError),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    reraise=True,
+)
 def get_embedding(text: str) -> list:
     result = client_genai.models.embed_content(
         model="models/gemini-embedding-001",
@@ -102,3 +110,14 @@ def search_similar(query: str, workspace_id: str, limit: int = 5) -> list:
         }
         for r in results
     ]
+
+def delete_chunks_by_file(file_id: str):
+    """Remove all vector chunks belonging to a file from Qdrant."""
+    client.delete(
+        collection_name=COLLECTION_NAME,
+        points_selector=Filter(
+            must=[
+                FieldCondition(key="file_id", match=MatchValue(value=file_id))
+            ]
+        )
+    )

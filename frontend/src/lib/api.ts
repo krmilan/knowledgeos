@@ -30,6 +30,11 @@ async function request<T>(
     throw new Error(error.detail || "Something went wrong");
   }
 
+  // 204 No Content has no body to parse
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return response.json();
 }
 
@@ -69,12 +74,17 @@ export const apiFiles = {
     const formData = new FormData();
     formData.append("file", file);
 
-    return fetch(`${BASE_URL}/workspaces/${workspaceId}/files/upload`, {
+    return fetch(`${BASE_URL}/workspaces/${workspaceId}/files/`, {
       method: "POST",
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
     }).then((r) => r.json());
   },
+
+  delete: (workspaceId: string, fileId: string) =>
+    request<void>(`/workspaces/${workspaceId}/files/${fileId}`, {
+      method: "DELETE",
+    }),
 };
 
 // Chat

@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from app.worker import celery_app
 from app.database import SessionLocal
@@ -14,6 +15,16 @@ from app.websocket_manager import publish_to_workspace
 
 logger = logging.getLogger(__name__)
 
+
+def group_chunks_for_extraction(chunks: list[str], group_size: int = 1) -> list[str]:
+    groups = []
+    for i in range(0, len(chunks), group_size):
+        group = " ".join(chunks[i:i + group_size])
+        if group.strip():
+            groups.append(group)
+    return groups
+
+
 @celery_app.task(name="process_file")
 def process_file(file_id: str):
     db = SessionLocal()
@@ -28,25 +39,24 @@ def process_file(file_id: str):
         print(f"Processing file: {file.original_name}")
 
         if file.file_type == "pdf":
-            # Extract text
             text = extract_text(file.storage_path)
             print(f"Extracted {len(text)} characters")
 
-            # Chunk text
             chunks = chunk_text(text)
             print(f"Created {len(chunks)} chunks")
 
-            # Store in Qdrant
             store_chunks(
                 file_id=str(file.id),
                 workspace_id=str(file.workspace_id),
                 chunks=chunks
             )
 
-            # Extract entities from each chunk and resolve them
-            for chunk in chunks:
+            extraction_groups = group_chunks_for_extraction(chunks, group_size=1)
+            print(f"Running entity extraction on {len(extraction_groups)} windows")
+
+            for group in extraction_groups:
                 try:
-                    extracted = extract_entities_from_chunk(chunk)
+                    extracted = extract_entities_from_chunk(group)
                     for item in extracted:
                         entity = resolve_entity(
                             db,
@@ -58,8 +68,8 @@ def process_file(file_id: str):
                 except Exception:
                     logger.exception("Entity extraction failed for a chunk of file %s", file_id)
                     continue
+                time.sleep(2)  # avoid Groq free-tier rate limiting between chunks
 
-        # Mark as processed
         file.is_processed = True
         db.commit()
 

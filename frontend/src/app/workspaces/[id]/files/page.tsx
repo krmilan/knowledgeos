@@ -12,6 +12,7 @@ export default function FilesPage() {
   const [files, setFiles] = useState<KFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [notification, setNotification] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -56,6 +57,22 @@ export default function FilesPage() {
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  async function handleDelete(fileId: string, fileName: string) {
+    if (!confirm(`Delete "${fileName}"? This can't be undone.`)) return;
+
+    setDeletingId(fileId);
+    try {
+      await apiFiles.delete(id, fileId);
+      setFiles((prev) => prev.filter((f) => f.id !== fileId));
+      setNotification("File deleted.");
+      setTimeout(() => setNotification(""), 3000);
+    } catch (err: any) {
+      setNotification("Delete failed: " + err.message);
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -116,9 +133,19 @@ export default function FilesPage() {
                   <p className="text-white font-medium">{file.original_name}</p>
                   <p className="text-gray-500 text-xs mt-1">{new Date(file.created_at).toLocaleDateString()}</p>
                 </div>
-                <span className={`text-sm font-medium ${file.is_processed ? "text-green-400" : "text-yellow-400"}`}>
+                <div className="flex items-center gap-4">
+                  <span className={`text-sm font-medium ${file.is_processed ? "text-green-400" : "text-yellow-400"}`}>
                     {file.is_processed ? "completed" : "processing"}
-                </span>
+                  </span>
+                  <button
+                    onClick={() => handleDelete(file.id, file.original_name)}
+                    disabled={deletingId === file.id}
+                    className="text-gray-500 hover:text-red-400 transition-colors disabled:opacity-50 text-sm"
+                    title="Delete file"
+                  >
+                    {deletingId === file.id ? "..." : "🗑"}
+                  </button>
+                </div>
               </div>
             ))}
           </div>

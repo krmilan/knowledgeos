@@ -1,7 +1,5 @@
 from app.services.vector import search_similar
 
-# This is the JSON description the LLM reads to understand the tool.
-# The LLM never sees your Python code — only this description.
 SEARCH_DOCUMENTS_TOOL = {
     "type": "function",
     "function": {
@@ -17,11 +15,6 @@ SEARCH_DOCUMENTS_TOOL = {
                 "query": {
                     "type": "string",
                     "description": "The search query. Make it specific and descriptive for best results."
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Number of results to return. Default 3, max 5.",
-                    "default": 3
                 }
             },
             "required": ["query"]
@@ -31,12 +24,7 @@ SEARCH_DOCUMENTS_TOOL = {
 
 
 def run_search_documents(query: str, workspace_id: str, limit: int = 3) -> str:
-    """
-    This is the actual Python function that runs when the LLM calls search_documents.
-    It calls your existing vector search from Phase 6 — no new logic needed.
-    Returns a string because tool results must be text that goes back into the LLM conversation.
-    """
-    limit = min(limit, 5)  # safety cap
+    limit = min(limit, 5)
     chunks = search_similar(query=query, workspace_id=workspace_id, limit=limit)
 
     if not chunks:

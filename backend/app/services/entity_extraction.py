@@ -1,9 +1,9 @@
 """
 backend/app/services/entity_extraction.py
-
 """
 
 import json
+import re
 import logging
 
 from groq import Groq
@@ -12,93 +12,105 @@ logger = logging.getLogger(__name__)
 
 client = Groq()
 
-VALID_TYPES = {"concept", "technology", "topic", "person", "organization"}
-
-ENTITY_EXTRACTION_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "record_entities",
-        "description": "Record the distinct entities mentioned in a piece of text from a document.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "entities": {
-                    "type": "array",
-                    "description": (
-                        "Entities found in the text. Return an empty array if the text contains "
-                        "no meaningful entities (e.g. it's boilerplate, a page header, or pure "
-                        "prose with nothing worth extracting)."
-                    ),
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": (
-                                    "Canonical name of the entity, properly capitalized "
-                                    "(e.g. 'PostgreSQL', not 'postgresql' or 'Postgre SQL')."
-                                ),
-                            },
-                            "type": {
-                                "type": "string",
-                                "enum": sorted(VALID_TYPES),
-                                "description": "Category of the entity.",
-                            },
-                        },
-                        "required": ["name", "type"],
-                    },
-                }
-            },
-            "required": ["entities"],
-        },
-    },
+VALID_TYPES = {
+    "concept",
+    "technology",
+    "topic",
+    "person",
+    "organization",
+    "event",
+    "place",
+    "product",
 }
 
 EXTRACTION_SYSTEM_PROMPT = """You are an entity extraction system for a knowledge management tool. \
-Given a chunk of text from a document, identify the important entities it mentions \
-and call record_entities with them.
+Documents can be of any kind — resumes, books, contracts, receipts, research papers, articles, or anything else.
 
-Guidelines:
-- Only extract entities that are meaningful for understanding what this document is about.
-- Skip generic words, filler, and anything not central to the document's content.
-- Use the canonical, properly-capitalized form of each name (e.g. "Kubernetes", not "kubernetes" or "k8s").
-- If the text has nothing worth extracting, call record_entities with an empty entities array.
+Given a chunk of text, identify the important named entities and return them as a JSON array.
+
+The test for whether something is an entity: does it refer to one specific, identifiable thing that has \
+a proper name, and would knowing about it help someone later understand or navigate this document?
+
+Entity types:
+- person — a named individual, real or fictional (e.g. "Marie Curie", "Sherlock Holmes")
+- organization — a company, institution, government body (e.g. "Google", "MIT", "IRS")
+- technology — a named tool, framework, language, or system (e.g. "React", "PostgreSQL")
+- product — a named product, book, course, or software (e.g. "Python Bible", "iPhone 15")
+- event — a named conference, ceremony, or historical event (e.g. "ICCS 2023", "Treaty of Versailles")
+- place — a named location, city, country, or region (e.g. "Bengaluru", "Amazon rainforest")
+- concept — a named theory, method, or abstract idea (e.g. "Machine Learning", "relativity")
+- topic — a broad named subject or theme (e.g. "Blockchain", "Web Development")
+
+Do NOT extract:
+- Numbers, amounts, percentages, scores, or dates (e.g. "85%", "2023", "$4,500")
+- Generic nouns with no proper name (e.g. "the company", "a developer", "the system")
+- Contact details (emails, phone numbers, URLs)
+
+Return ONLY a valid JSON array with no extra text, no markdown, no code blocks. Examples:
+[{"name": "React", "type": "technology"}, {"name": "Google", "type": "organization"}]
+
+If there are no entities, return an empty array: []
 """
 
+def _call_groq_for_entities(chunk_text: str):
+    return client.chat.completions.create(
+        model="qwen/qwen3-32b",
+        messages=[
+            {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": chunk_text + "\n/no_think"
+            },
+        ],
+        max_tokens=1024,
+        temperature=0,
+        reasoning_format="hidden",
+    )
 
 def extract_entities_from_chunk(chunk_text: str) -> list[dict]:
     """
     Returns a list of {"name": str, "type": str} dicts.
-    Returns [] on any failure - extraction is best-effort and must never
-    crash the Celery file-processing task.
+    Uses plain JSON response with Qwen3 + hidden reasoning mode.
+    Returns [] on any failure.
     """
-    try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
-                {"role": "user", "content": chunk_text},
-            ],
-            tools=[ENTITY_EXTRACTION_TOOL],
-            tool_choice={"type": "function", "function": {"name": "record_entities"}},
-        )
+    for attempt in range(2):
+        try:
+            response = _call_groq_for_entities(chunk_text)
 
-        tool_calls = response.choices[0].message.tool_calls
-        if not tool_calls:
-            logger.warning("No tool call returned for chunk extraction")
+            content = response.choices[0].message.content or ""
+            content = content.strip()
+
+            # Strip markdown code blocks if model wraps response in them
+            content = re.sub(r"```json\s*", "", content)
+            content = re.sub(r"```\s*", "", content)
+            content = content.strip()
+
+            if not content:
+                logger.warning("Attempt %d: empty response from model", attempt + 1)
+                continue
+
+            raw_entities = json.loads(content)
+
+            if not isinstance(raw_entities, list):
+                logger.warning("Attempt %d: response is not a list: %r", attempt + 1, content)
+                continue
+
+            cleaned = []
+            for item in raw_entities:
+                name = str(item.get("name", "")).strip()
+                etype = str(item.get("type", "")).strip().lower()
+                if name and etype in VALID_TYPES:
+                    cleaned.append({"name": name, "type": etype})
+
+            return cleaned
+
+        except json.JSONDecodeError as e:
+            logger.warning("Attempt %d: JSON parse error (%s) on: %r", attempt + 1, e, content)
+            continue
+
+        except Exception:
+            logger.exception("Entity extraction failed unexpectedly for chunk")
             return []
 
-        arguments = json.loads(tool_calls[0].function.arguments)
-        raw_entities = arguments.get("entities", [])
-
-        cleaned = []
-        for item in raw_entities:
-            name = str(item.get("name", "")).strip()
-            etype = str(item.get("type", "")).strip().lower()
-            if name and etype in VALID_TYPES:
-                cleaned.append({"name": name, "type": etype})
-        return cleaned
-
-    except Exception:
-        logger.exception("Entity extraction failed for chunk")
-        return []
+    logger.warning("Entity extraction gave up after retries")
+    return []

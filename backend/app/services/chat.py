@@ -1,3 +1,4 @@
+import re
 from groq import Groq
 from app.services.vector import search_similar
 import os
@@ -6,6 +7,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+def strip_thinking(text: str) -> str:
+    """Qwen3 reasoning models emit a <think>...</think> block before the real answer.
+    Strip it so users only see the final response."""
+    return re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL).strip()
 
 def build_prompt(question: str, context_chunks: list) -> str:
     context = "\n\n".join([
@@ -40,14 +46,14 @@ def chat_with_knowledge(question: str, workspace_id: str) -> dict:
     prompt = build_prompt(question, chunks)
 
     response = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="qwen/qwen3.6-27b",
         messages=[
             {"role": "user", "content": prompt}
-        ]
+        ],
     )
 
     return {
-        "answer": response.choices[0].message.content,
+        "answer": strip_thinking(response.choices[0].message.content),
         "sources": [
             {
                 "file_id": chunk["file_id"],
